@@ -27,6 +27,8 @@ from cli_anything.banana_slides.utils.config import (
     save_config,
     get_base_url,
     get_access_code,
+    get_mode,
+    get_local_config,
 )
 
 console = Console()
@@ -54,6 +56,20 @@ def _make_client(ctx) -> BananaSlidesClient:
     return BananaSlidesClient(base_url, access_code)
 
 
+def _make_backend(ctx):
+    """Return a SlidesBackend (LocalBackend or RemoteBackend) based on mode."""
+    mode = ctx.obj.get("mode") or get_mode()
+    if mode == "local":
+        from cli_anything.banana_slides.engine.local_backend import LocalBackend
+        local_cfg = get_local_config()
+        max_workers = local_cfg.pop("max_workers", 4)
+        return LocalBackend(config=local_cfg, max_workers=max_workers)
+    from cli_anything.banana_slides.engine.remote import RemoteBackend
+    base_url = ctx.obj.get("base_url") or get_base_url()
+    access_code = ctx.obj.get("access_code") or get_access_code()
+    return RemoteBackend(base_url=base_url, access_code=access_code)
+
+
 # ---------------------------------------------------------------------------
 # Root CLI group
 # ---------------------------------------------------------------------------
@@ -61,12 +77,15 @@ def _make_client(ctx) -> BananaSlidesClient:
 @click.group()
 @click.option("--base-url", envvar="BANANA_SLIDES_BASE_URL", default=None, help="API base URL")
 @click.option("--access-code", envvar="BANANA_SLIDES_ACCESS_CODE", default=None, help="Access code")
+@click.option("--mode", type=click.Choice(["local", "remote"]), default=None,
+              envvar="BANANA_SLIDES_MODE", help="Backend mode: local (AI runs locally) or remote (HTTP API)")
 @click.pass_context
-def cli(ctx, base_url, access_code):
+def cli(ctx, base_url, access_code, mode):
     """CLI harness for Banana Slides – AI-powered PPT generation."""
     ctx.ensure_object(dict)
     ctx.obj["base_url"] = base_url
     ctx.obj["access_code"] = access_code
+    ctx.obj["mode"] = mode
 
 
 # ===========================================================================
@@ -103,11 +122,59 @@ def config_set_access_code(code):
 def config_show(as_json):
     """Show current CLI configuration."""
     cfg = load_config()
-    # Mask access code
+    # Mask access code and API key
     display = dict(cfg)
     if display.get("access_code"):
         display["access_code"] = "***"
+    local = display.get("local", {})
+    if local.get("api_key"):
+        local = dict(local)
+        local["api_key"] = "***"
+        display["local"] = local
     _out(display, as_json)
+
+
+@config.command("set-mode")
+@click.argument("mode", type=click.Choice(["local", "remote"]))
+def config_set_mode(mode):
+    """Set the backend mode (local or remote)."""
+    cfg = load_config()
+    cfg["mode"] = mode
+    save_config(cfg)
+    console.print(f"[green]Mode set to:[/green] {mode}")
+
+
+@config.command("set-local")
+@click.option("--provider", type=click.Choice(["openai", "gemini"]), help="AI provider format")
+@click.option("--api-key", help="API key for the AI provider")
+@click.option("--api-base", help="API base URL")
+@click.option("--text-model", help="Text generation model name")
+@click.option("--image-model", help="Image generation model name")
+@click.option("--max-workers", type=int, help="Max parallel workers for image generation")
+def config_set_local(provider, api_key, api_base, text_model, image_model, max_workers):
+    """Configure local mode settings (AI provider, models, etc.)."""
+    cfg = load_config()
+    local = cfg.get("local", {})
+    if provider is not None:
+        local["ai_provider_format"] = provider
+    if api_key is not None:
+        local["api_key"] = api_key
+    if api_base is not None:
+        local["api_base"] = api_base
+    if text_model is not None:
+        local["text_model"] = text_model
+    if image_model is not None:
+        local["image_model"] = image_model
+    if max_workers is not None:
+        local["max_workers"] = max_workers
+    cfg["local"] = local
+    save_config(cfg)
+    console.print("[green]Local config updated.[/green]")
+    # Show current local config (mask key)
+    show = dict(local)
+    if show.get("api_key"):
+        show["api_key"] = show["api_key"][:8] + "***"
+    rprint(show)
 
 
 # ===========================================================================
