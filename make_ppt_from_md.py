@@ -154,7 +154,7 @@ def _poll_remote(client, project_id, task_id, timeout=600, label=""):
 
 def _make_ppt_from_md_local(
     md_path, topic, md_content, slides, lang, out,
-    with_images=True,
+    with_images=True, export_mode="image",
 ) -> str:
     from cli_anything.banana_slides.engine.local_backend import LocalBackend
 
@@ -196,7 +196,7 @@ def _make_ppt_from_md_local(
         _fail(f"描述生成失败：{e}")
     _ok("描述生成完成")
 
-    export_mode = "text"
+    effective_export_mode = "text"
     if with_images:
         step += 1
         _step(step, total_steps, "为每张幻灯片生成图片（可能需要几分钟）…")
@@ -208,15 +208,21 @@ def _make_ppt_from_md_local(
             img_failed = img_result.get("failed", 0)
             _ok(f"图片生成完成：成功 {img_done}，失败 {img_failed}")
             if img_done > 0:
-                export_mode = "image"
+                effective_export_mode = export_mode  # use requested mode
             else:
                 _info("无图片生成成功，回退到纯文本模式")
         except Exception as e:
             _info(f"图片生成失败（{e}），回退到纯文本模式")
 
+    if effective_export_mode == "editable":
+        _info("分析幻灯片图片，提取可编辑元素…")
+
     _info("构建 PPTX 文件…")
     try:
-        output_path = backend.export_pptx(pid, filename=filename, mode=export_mode)
+        output_path = backend.export_pptx(
+            pid, filename=filename, mode=effective_export_mode,
+            progress_callback=_progress_callback,
+        )
     except Exception as e:
         _fail(f"导出 PPTX 失败：{e}")
     _ok("文件已生成")
@@ -235,6 +241,7 @@ def make_ppt_from_md(
     fmt: str = "pptx",
     mode: str = "",
     with_images: bool = True,
+    export_mode: str = "image",
 ) -> str:
     md_file = Path(md_path)
     if not md_file.exists():
@@ -259,7 +266,7 @@ def make_ppt_from_md(
     if effective_mode == "local":
         return _make_ppt_from_md_local(
             md_path, topic, md_content, slides, lang, out,
-            with_images=with_images,
+            with_images=with_images, export_mode=export_mode,
         )
     return _make_ppt_from_md_remote(
         md_path, topic, md_content, slides, lang, out, base_url, access_code,
@@ -281,6 +288,9 @@ def main():
                         help="运行模式：local / remote（默认读取配置）")
     parser.add_argument("--no-images", action="store_true",
                         help="跳过图片生成，只生成纯文本幻灯片")
+    parser.add_argument("--export-mode", default="image",
+                        choices=["image", "text", "editable"],
+                        help="导出模式：image（纯图片）/ text（纯文本）/ editable（可编辑）")
     args = parser.parse_args()
 
     md_path = Path(args.file)
@@ -290,7 +300,7 @@ def main():
     print("=" * 58)
     print(f"  输入：{md_path.name}")
     print(f"  页数：{'AI 自动决定' if args.slides == 0 else args.slides}")
-    print(f"  语言：{args.lang}  格式：{args.fmt.upper()}  模式：{effective_mode}")
+    print(f"  语言：{args.lang}  格式：{args.fmt.upper()}  模式：{effective_mode}  导出：{args.export_mode}")
     print("=" * 58)
 
     result = make_ppt_from_md(
@@ -303,6 +313,7 @@ def main():
         fmt=args.fmt,
         mode=args.mode,
         with_images=not args.no_images,
+        export_mode=args.export_mode,
     )
 
     print("\n" + "=" * 58)

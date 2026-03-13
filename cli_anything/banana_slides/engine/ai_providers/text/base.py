@@ -38,3 +38,21 @@ class TextProvider(ABC):
         Subclasses should override for true streaming support.
         """
         yield self.generate_text(prompt, thinking_budget=thinking_budget)
+
+    def generate_text_with_image(self, prompt: str, image_path: str,
+                                 thinking_budget: int = 0) -> str:
+        """
+        Generate text from a prompt + image (vision).
+
+        Default implementation ignores the image and falls back to text-only.
+        Subclasses should override for true vision support.
+
+        Args:
+            prompt: The text prompt describing what to extract/analyze.
+            image_path: Absolute path to the image file.
+            thinking_budget: Budget for thinking/reasoning.
+
+        Returns:
+            Generated text content.
+        """
+        return self.generate_text(prompt, thinking_budget=thinking_budget)

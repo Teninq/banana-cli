@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Optional
 
 from .ai_service import AIService, ProjectContext
 from .local_store import LocalStore
-from .export import export_text_pptx, export_image_pptx
+from .export import export_text_pptx, export_image_pptx, export_editable_pptx
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +171,8 @@ class LocalBackend:
         return self.store.get_pages(project_id)
 
     def export_pptx(self, project_id: str, filename: str = "",
-                    mode: str = "image") -> str:
+                    mode: str = "image",
+                    progress_callback: Optional[Callable] = None) -> str:
         project = self.store.get_project(project_id)
         exports_dir = self.store.get_exports_dir(project_id)
 
@@ -186,7 +187,7 @@ class LocalBackend:
             title = project.get("name") or project.get("topic", "Presentation")
             return export_text_pptx(pages, output_path, title=title)
 
-        # Image mode
+        # Collect image paths (shared by image and editable modes)
         image_paths = []
         for p in sorted(pages, key=lambda x: x.get("order_index", 0)):
             ip = p.get("image_path")
@@ -199,4 +200,42 @@ class LocalBackend:
             return export_text_pptx(pages, output_path, title=title)
 
         aspect_ratio = project.get("aspect_ratio", "16:9")
+
+        if mode == "editable":
+            return self._export_editable(
+                image_paths, output_path, aspect_ratio,
+                progress_callback=progress_callback,
+            )
+
+        # Default: image mode
         return export_image_pptx(image_paths, output_path, aspect_ratio=aspect_ratio)
+
+    def _export_editable(self, image_paths: List[str], output_path: str,
+                         aspect_ratio: str,
+                         progress_callback: Optional[Callable] = None) -> str:
+        """Analyze slide images and export editable PPTX."""
+        from .image_analyzer import analyze_slide_image
+
+        text_provider = self.ai.text_provider
+        total = len(image_paths)
+        analysis_results = []
+
+        for idx, img_path in enumerate(image_paths):
+            logger.info("Analyzing slide %d/%d: %s", idx + 1, total, img_path)
+            try:
+                elements = analyze_slide_image(img_path, text_provider)
+            except Exception as e:
+                logger.error("Failed to analyze slide %d: %s", idx + 1, e)
+                elements = []
+            analysis_results.append(elements)
+
+            if progress_callback:
+                progress_callback({
+                    "status": "analyzing",
+                    "progress": {"total": total, "completed": idx + 1, "failed": 0},
+                })
+
+        return export_editable_pptx(
+            image_paths, analysis_results, output_path,
+            aspect_ratio=aspect_ratio,
+        )

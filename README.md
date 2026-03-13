@@ -5,8 +5,9 @@ CLI 工具集，用于驱动 [Banana Slides](http://localhost:5000) AI 幻灯片
 ## 前置条件
 
 - Python >= 3.9
-- Banana Slides 后端运行在 `http://localhost:5000`（或自定义地址）
-- 如需本地构建 PPTX，需额外安装 `python-pptx`
+- **远程模式**：Banana Slides 后端运行在 `http://localhost:5000`（或自定义地址）
+- **本地模式**：配置 AI API 密钥（OpenAI 兼容 或 Google Gemini）
+- 如需本地构建 PPTX，需额外安装 `python-pptx`、`Pillow`
 
 ## 安装
 
@@ -21,7 +22,11 @@ pip install -e .
 ### 1. 一键生成 PPT（推荐）
 
 ```bash
+# 远程模式（默认）
 python make_ppt.py --topic "气候变化与新能源" --slides 8 --lang zh
+
+# 本地模式 + 可编辑导出
+python make_ppt.py --topic "AI in Healthcare" --mode local --export-mode editable
 ```
 
 参数说明：
@@ -36,6 +41,8 @@ python make_ppt.py --topic "气候变化与新能源" --slides 8 --lang zh
 | `--url` | 后端地址 | `http://localhost:5000` |
 | `--key` | 访问码（服务端 ACCESS_CODE） | 空 |
 | `--format` | 导出格式：pptx / pdf | `pptx` |
+| `--mode` | 运行模式：local / remote | 配置文件 |
+| `--export-mode` | 导出模式：image / text / editable | `image` |
 
 流程：创建项目 → 生成大纲 → 生成描述 → 生成图片 → 导出文件。
 
@@ -43,9 +50,10 @@ python make_ppt.py --topic "气候变化与新能源" --slides 8 --lang zh
 
 ```bash
 python make_ppt_from_md.py my_document.md --lang zh
+python make_ppt_from_md.py my_document.md --mode local --export-mode editable
 ```
 
-从 Markdown 文件提取内容，AI 自动生成大纲和描述，再用 `python-pptx` 本地构建 PPTX（跳过图片生成，速度更快）。
+从 Markdown 文件提取内容，AI 自动生成大纲和描述。支持 `--export-mode` 参数选择导出模式。
 
 参数与 `make_ppt.py` 类似，第一个位置参数为 Markdown 文件路径。
 
@@ -90,19 +98,44 @@ agent-harness/
 ├── BANANA-SLIDES.md                 # API 参考文档
 └── cli_anything/banana_slides/
     ├── banana_slides_cli.py         # Click CLI 入口
-    ├── core/
+    ├── core/                        # 远程 HTTP API 层
     │   ├── client.py                # HTTP 客户端封装
     │   ├── project.py               # 项目 API
     │   ├── page.py                  # 页面 API
     │   ├── task.py                  # 异步任务轮询
     │   ├── export.py                # 导出 API
     │   └── settings.py              # 设置 API
+    ├── engine/                      # 本地 AI 引擎
+    │   ├── local_backend.py         # LocalBackend（SlidesBackend 实现）
+    │   ├── ai_service.py            # AI 编排（大纲/描述/图片）
+    │   ├── export.py                # PPTX 导出（text/image/editable）
+    │   ├── pptx_builder.py          # 可编辑 PPTX 构建器
+    │   ├── image_analyzer.py        # AI 视觉分析（提取可编辑元素）
+    │   ├── local_store.py           # JSON 文件存储
+    │   ├── prompts.py               # LLM 提示词模板
+    │   └── ai_providers/            # 可插拔 AI 提供商
+    │       ├── text/                # 文本生成（GenAI/OpenAI，含视觉）
+    │       └── image/               # 图片生成（GenAI/OpenAI）
     ├── utils/
     │   └── config.py                # 配置管理
     └── tests/
         ├── test_core.py             # 核心模块测试
         └── test_full_e2e.py         # 端到端测试
 ```
+
+## 导出模式
+
+| 模式 | 说明 | 文字可编辑 | 需要图片 |
+|------|------|:---:|:---:|
+| `image` | 每页一张全尺寸 PNG | ✗ | ✓ |
+| `text` | 深色主题纯文字幻灯片 | ✓ | ✗ |
+| `editable` | 原图背景 + AI 提取的可编辑文字覆盖层 | ✓ | ✓ |
+
+`editable` 模式的工作原理：
+1. 用 AI 视觉模型分析每张幻灯片图片，提取文字元素的位置、内容和样式
+2. 以原图作为全尺寸背景
+3. 在文字区域放置与背景色匹配的不透明矩形遮盖原始文字
+4. 在矩形上方放置可编辑的文本框
 
 ## 工作流说明
 

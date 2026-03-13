@@ -168,7 +168,7 @@ def _poll_task(client, project_id, task_id, timeout=600):
 # ─── 本地模式 ──────────────────────────────────────────────────────────────
 
 def _make_ppt_local(
-    topic, slides, lang, style, out, fmt,
+    topic, slides, lang, style, out, fmt, export_mode="image",
 ) -> str:
     from cli_anything.banana_slides.engine.local_backend import LocalBackend
 
@@ -211,9 +211,12 @@ def _make_ppt_local(
     failed = result.get("failed", 0)
     _ok(f"图片生成完成（成功:{completed} 失败:{failed}）")
 
-    _step(5, f"导出 {fmt.upper()}…")
+    _step(5, f"导出 {fmt.upper()}（{export_mode} 模式）…")
     try:
-        output_path = backend.export_pptx(pid, filename=filename, mode="image")
+        output_path = backend.export_pptx(
+            pid, filename=filename, mode=export_mode,
+            progress_callback=_progress_callback,
+        )
     except Exception as e:
         _fail(f"导出失败：{e}")
     _ok("导出成功！")
@@ -232,14 +235,17 @@ def make_ppt(
     access_code: str = "",
     fmt: str = "pptx",
     mode: str = "",
+    export_mode: str = "image",
 ) -> str:
     """
     完整生成流程：创建项目 → 生成大纲 → 生成描述 → 生成图片 → 导出。
     mode='local' 使用本地 AI，mode='remote' 使用远程 HTTP API。
+    export_mode: 'image' | 'text' | 'editable'
     """
     effective_mode = mode or get_mode()
     if effective_mode == "local":
-        return _make_ppt_local(topic, slides, lang, style, out, fmt)
+        return _make_ppt_local(topic, slides, lang, style, out, fmt,
+                               export_mode=export_mode)
     return _make_ppt_remote(topic, slides, lang, style, out, base_url, access_code, fmt)
 
 
@@ -257,6 +263,9 @@ def main():
     parser.add_argument("--format", dest="fmt", default="pptx", choices=["pptx", "pdf"])
     parser.add_argument("--mode", default="", choices=["local", "remote", ""],
                         help="运行模式：local / remote（默认读取配置）")
+    parser.add_argument("--export-mode", default="image",
+                        choices=["image", "text", "editable"],
+                        help="导出模式：image（纯图片）/ text（纯文本）/ editable（可编辑）")
     args = parser.parse_args()
 
     effective_mode = args.mode or get_mode()
@@ -266,7 +275,7 @@ def main():
     print("=" * 55)
     print(f"  主题：{args.topic}")
     print(f"  页数：{'AI决定' if args.slides == 0 else args.slides}")
-    print(f"  语言：{args.lang}  格式：{args.fmt.upper()}  模式：{effective_mode}")
+    print(f"  语言：{args.lang}  格式：{args.fmt.upper()}  模式：{effective_mode}  导出：{args.export_mode}")
     print("=" * 55)
 
     result = make_ppt(
@@ -279,6 +288,7 @@ def main():
         access_code=args.key,
         fmt=args.fmt,
         mode=args.mode,
+        export_mode=args.export_mode,
     )
 
     print("\n" + "=" * 55)

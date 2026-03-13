@@ -78,3 +78,22 @@ class GenAITextProvider(TextProvider):
         for chunk in response:
             if chunk.text:
                 yield chunk.text
+
+    def generate_text_with_image(self, prompt: str, image_path: str,
+                                 thinking_budget: int = 0) -> str:
+        import mimetypes
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+        config_params = {}
+        if thinking_budget > 0:
+            config_params['thinking_config'] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=[prompt, image_part],
+            config=types.GenerateContentConfig(**config_params) if config_params else None,
+        )
+        return _validate_response(response)

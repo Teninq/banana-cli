@@ -1,9 +1,10 @@
 """
 PPTX export utilities (standalone, no Flask)
 
-Two export modes:
+Three export modes:
   1. Text PPTX -- styled slides with text content (dark theme)
   2. Image PPTX -- full-bleed slide images
+  3. Editable PPTX -- background image + overlay editable text elements
 """
 import math
 import logging
@@ -222,3 +223,107 @@ def export_image_pptx(image_paths: List[str], output_path: str,
 
     prs.save(str(output_path))
     return str(output_path)
+
+
+# ── Editable PPTX ─────────────────────────────────────────────────────────
+
+def export_editable_pptx(image_paths: List[str],
+                         analysis_results: List[List],
+                         output_path: str,
+                         aspect_ratio: str = "16:9") -> str:
+    """Create PPTX with background images and editable text overlays.
+
+    Each slide:
+      1. Full-bleed original image as background
+      2. Opaque rectangles covering original text areas (color-matched)
+      3. Editable text boxes positioned over the rectangles
+
+    Args:
+        image_paths: List of slide image file paths.
+        analysis_results: List of SlideElement lists (one per image),
+                          as returned by image_analyzer.analyze_slide_image().
+        output_path: Where to save the PPTX file.
+        aspect_ratio: Slide aspect ratio string, e.g. "16:9".
+
+    Returns:
+        The output file path.
+    """
+    from .pptx_builder import PPTXBuilder
+    from .image_analyzer import SlideElement, get_dominant_color_around_bbox
+    from PIL import Image as PILImage
+
+    page_w, page_h = _get_page_size_inches(aspect_ratio)
+    builder = PPTXBuilder(slide_width_inches=page_w, slide_height_inches=page_h)
+    builder.create_presentation()
+
+    for idx, image_path in enumerate(image_paths):
+        if not os.path.exists(image_path):
+            logger.warning("Image not found: %s", image_path)
+            continue
+
+        slide = builder.add_blank_slide()
+
+        # 1) Add original image as full-bleed background
+        slide.shapes.add_picture(
+            image_path, left=0, top=0,
+            width=builder.prs.slide_width,
+            height=builder.prs.slide_height,
+        )
+
+        # 2) Get image dimensions for DPI calculation
+        img = PILImage.open(image_path)
+        img_w, img_h = img.size
+        img.close()
+        # Virtual DPI: map image pixels to slide inches
+        dpi_x = img_w / page_w
+        dpi_y = img_h / page_h
+        dpi = int((dpi_x + dpi_y) / 2)
+
+        # 3) Process elements for this slide
+        elements = analysis_results[idx] if idx < len(analysis_results) else []
+
+        for elem in elements:
+            if elem.element_type == "text" and elem.content.strip():
+                _add_editable_text_overlay(
+                    slide, builder, elem, image_path, dpi,
+                )
+            elif elem.element_type == "image":
+                # Image regions stay as-is (part of background); skip
+                pass
+
+    builder.save(str(output_path))
+    return str(output_path)
+
+
+def _add_editable_text_overlay(slide, builder, elem, image_path: str,
+                               dpi: int) -> None:
+    """Add a color-matched rectangle + editable text box for one text element."""
+    from .image_analyzer import get_dominant_color_around_bbox
+
+    bbox = elem.bbox
+    bbox_tuple = bbox.as_tuple()
+
+    # Detect background color near the text region
+    bg_r, bg_g, bg_b = get_dominant_color_around_bbox(image_path, bbox)
+
+    # Add opaque rectangle to cover the original text
+    x0, y0, x1, y1 = bbox_tuple
+    left = Inches(x0 / dpi)
+    top = Inches(y0 / dpi)
+    width = Inches((x1 - x0) / dpi)
+    height = Inches((y1 - y0) / dpi)
+
+    rect = slide.shapes.add_shape(1, left, top, width, height)  # MSO_SHAPE.RECTANGLE
+    rect.fill.solid()
+    rect.fill.fore_color.rgb = RGBColor(bg_r, bg_g, bg_b)
+    rect.line.fill.background()  # No border
+
+    # Add editable text box on top
+    builder.add_text_element(
+        slide=slide,
+        text=elem.content,
+        bbox=bbox_tuple,
+        dpi=dpi,
+        align=elem.style.get("alignment", "left"),
+        text_style=elem.style,
+    )

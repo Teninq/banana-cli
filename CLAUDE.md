@@ -33,6 +33,11 @@ Entry Scripts (make_ppt.py, make_ppt_from_md.py)
 
 **Pipeline flow** (5 steps): Create project → Generate outline → Generate descriptions → Generate images → Export PPTX
 
+**Export modes** (`--export-mode`):
+  - `image` (default) — each slide is a full-bleed PNG, not editable in PowerPoint
+  - `text` — dark-themed styled text slides, no images
+  - `editable` — background image + AI-extracted editable text overlays (uses vision model to analyze slide images, places color-matched rectangles over original text, then adds editable text boxes)
+
 **Page state machine**: `DRAFT` → `OUTLINE_GENERATED` → `DESCRIPTION_GENERATED` → `IMAGE_GENERATED`
 
 ## Configuration
@@ -60,9 +65,11 @@ pip install -e ".[local]"
 # One-shot PPT generation
 python make_ppt.py --topic "主题" --lang zh
 python make_ppt.py --topic "Topic" --mode local
+python make_ppt.py --topic "Topic" --mode local --export-mode editable
 
 # Markdown to PPT
 python make_ppt_from_md.py doc.md
+python make_ppt_from_md.py doc.md --mode local --export-mode editable
 
 # Export existing project to local PPTX
 python export_pptx_from_descriptions.py
