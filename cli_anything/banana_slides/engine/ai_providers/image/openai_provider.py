@@ -85,7 +85,29 @@ class OpenAIImageProvider(ImageProvider):
 
             message = response.choices[0].message
 
-            # Try multi_mod_content first
+            # Try 'images' field (OpenRouter / newer API format)
+            raw = message.model_dump() if hasattr(message, 'model_dump') else {}
+            images_list = raw.get('images') or getattr(message, 'images', None)
+            if images_list:
+                for img_item in images_list:
+                    if isinstance(img_item, dict):
+                        url = (img_item.get('image_url') or {}).get('url', '')
+                    elif hasattr(img_item, 'image_url'):
+                        iu = img_item.image_url
+                        url = iu.get('url', '') if isinstance(iu, dict) else getattr(iu, 'url', '')
+                    else:
+                        continue
+                    if url.startswith('data:image'):
+                        base64_data = url.split(',', 1)[1]
+                        return Image.open(BytesIO(base64.b64decode(base64_data)))
+                    elif url.startswith('http'):
+                        resp = requests.get(url, timeout=60, stream=True)
+                        resp.raise_for_status()
+                        img = Image.open(BytesIO(resp.content))
+                        img.load()
+                        return img
+
+            # Try multi_mod_content (Google AI Studio format)
             if hasattr(message, 'multi_mod_content') and message.multi_mod_content:
                 for part in message.multi_mod_content:
                     if "inline_data" in part:

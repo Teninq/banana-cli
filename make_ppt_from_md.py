@@ -154,6 +154,7 @@ def _poll_remote(client, project_id, task_id, timeout=600, label=""):
 
 def _make_ppt_from_md_local(
     md_path, topic, md_content, slides, lang, out,
+    with_images=True,
 ) -> str:
     from cli_anything.banana_slides.engine.local_backend import LocalBackend
 
@@ -163,9 +164,11 @@ def _make_ppt_from_md_local(
 
     md_file = Path(md_path)
     filename = (out or md_file.stem) + ".pptx"
-    total_steps = 3
+    total_steps = 4 if with_images else 3
+    step = 0
 
-    _step(1, total_steps, f"创建项目：{topic}")
+    step += 1
+    _step(step, total_steps, f"创建项目：{topic}")
     try:
         project = backend.create_project(
             topic=topic, idea_prompt=md_content,
@@ -177,23 +180,43 @@ def _make_ppt_from_md_local(
     _ok(f"项目 ID：{pid}")
     _info(f"内容长度：{len(md_content)} 字")
 
-    _step(2, total_steps, "根据文档内容生成幻灯片大纲…")
+    step += 1
+    _step(step, total_steps, "根据文档内容生成幻灯片大纲…")
     try:
         pages = backend.generate_outline(pid, num_pages=slides, language=lang)
     except Exception as e:
         _fail(f"大纲生成失败：{e}")
     _ok(f"共生成 {len(pages)} 张幻灯片")
 
-    _step(3, total_steps, "为每张幻灯片生成详细描述…")
+    step += 1
+    _step(step, total_steps, "为每张幻灯片生成详细描述…")
     try:
         result = backend.generate_descriptions(pid, language=lang, progress_callback=_progress_callback)
     except Exception as e:
         _fail(f"描述生成失败：{e}")
     _ok("描述生成完成")
 
+    export_mode = "text"
+    if with_images:
+        step += 1
+        _step(step, total_steps, "为每张幻灯片生成图片（可能需要几分钟）…")
+        try:
+            img_result = backend.generate_images(
+                pid, language=lang, progress_callback=_progress_callback,
+            )
+            img_done = img_result.get("completed", 0)
+            img_failed = img_result.get("failed", 0)
+            _ok(f"图片生成完成：成功 {img_done}，失败 {img_failed}")
+            if img_done > 0:
+                export_mode = "image"
+            else:
+                _info("无图片生成成功，回退到纯文本模式")
+        except Exception as e:
+            _info(f"图片生成失败（{e}），回退到纯文本模式")
+
     _info("构建 PPTX 文件…")
     try:
-        output_path = backend.export_pptx(pid, filename=filename, mode="text")
+        output_path = backend.export_pptx(pid, filename=filename, mode=export_mode)
     except Exception as e:
         _fail(f"导出 PPTX 失败：{e}")
     _ok("文件已生成")
@@ -211,6 +234,7 @@ def make_ppt_from_md(
     access_code: str = "",
     fmt: str = "pptx",
     mode: str = "",
+    with_images: bool = True,
 ) -> str:
     md_file = Path(md_path)
     if not md_file.exists():
@@ -235,6 +259,7 @@ def make_ppt_from_md(
     if effective_mode == "local":
         return _make_ppt_from_md_local(
             md_path, topic, md_content, slides, lang, out,
+            with_images=with_images,
         )
     return _make_ppt_from_md_remote(
         md_path, topic, md_content, slides, lang, out, base_url, access_code,
@@ -254,6 +279,8 @@ def main():
     parser.add_argument("--format", dest="fmt", default="pptx", choices=["pptx", "pdf"])
     parser.add_argument("--mode", default="", choices=["local", "remote", ""],
                         help="运行模式：local / remote（默认读取配置）")
+    parser.add_argument("--no-images", action="store_true",
+                        help="跳过图片生成，只生成纯文本幻灯片")
     args = parser.parse_args()
 
     md_path = Path(args.file)
@@ -275,6 +302,7 @@ def main():
         access_code=args.key,
         fmt=args.fmt,
         mode=args.mode,
+        with_images=not args.no_images,
     )
 
     print("\n" + "=" * 58)
